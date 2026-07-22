@@ -1,0 +1,43 @@
+name: check-boletas
+
+on:
+  schedule:
+    # GitHub no garantiza puntualidad exacta con cron, especialmente en
+    # horas pico. */10 es lo que pediste; si ves retrasos frecuentes,
+    # considera subir a */15.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}   # permite correrlo manualmente desde la pestaña Actions
+
+permissions:
+  contents: write   # necesario para poder commitear estado.json
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Instalar navegador de Playwright
+        run: playwright install --with-deps chromium
+
+      - name: Revisar disponibilidad
+        run: python check_boletas.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Guardar estado si cambió
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add estado.json
+          git diff --staged --quiet || git commit -m "actualizar estado"
+          git push

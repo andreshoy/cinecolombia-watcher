@@ -1,0 +1,118 @@
+"""
+Revisa si una fecha específica ya está disponible para comprar boletas
+de una película en cinecolombia.com.
+
+Se investigaron dos posibles señales:
+
+1. La API interna `ocapi/v1/film-screening-dates` — DESCARTADA. Devuelve
+   el calendario de PROGRAMACIÓN (qué días habrá función), no si ya se
+   puede comprar. Se confirmó en vivo: el 30 de julio ya aparecía en esa
+   respuesta mientras el date-picker todavía no lo mostraba como opción.
+2. El date-picker que el usuario ve y usa para comprar — CONFIRMADA.
+   Solo renderiza los días para los que ya se puede comprar boleta. Esta
+   es la señal real.
+
+Por eso el script usa Playwright para cargar la página con un navegador
+real y lee directamente los días visibles en el date-picker
+(`.v-date-picker-date__day-of-month`). Esto también evita tener que
+replicar el token Bearer (expira cada 12h, lo emite auth.moviexchange.com)
+o las cookies de Cloudflare (cf_clearance) — el navegador real las
+resuelve solo.
+
+Notifica por ntfy.sh (y opcionalmente Telegram) solo la PRIMERA vez que
+detecta la fecha disponible, usando estado.json para no repetir el aviso.
+"""
+
+import json
+import os
+import sys
+import urllib.request
+
+from playwright.sync_api import sync_playwright
+
+# ---- CONFIGURACIÓN ----------------------------------------------------
+FILM_URL = "https://www.cinecolombia.com/films/the-odyssey/HO00000386/"
+TARGET_DAY = "30"  # día del mes que estamos esperando (jueves 30 de julio)
+DATE_PICKER_SELECTOR = ".v-date-picker-date__day-of-month"
+STATE_FILE = "estado.json"
+
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC")  # ej: cineco-odyssey-xy7k2 (secreto)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+# ------------------------------------------------------------------------
+
+
+def get_available_days() -> list[str]:
+    """Abre la página de la película y devuelve los días visibles en el date-picker."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        )
+        page.goto(FILM_URL, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector(DATE_PICKER_SELECTOR, timeout=20000)
+        days = page.locator(DATE_PICKER_SELECTOR).all_inner_texts()
+        browser.close()
+        return [d.strip() for d in days]
+
+
+def notify(message: str) -> None:
+    if NTFY_TOPIC:
+        req = urllib.request.Request(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=message.encode("utf-8"),
+            headers={"Title": "Boletas Cinecolombia"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=15)
+
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": message}).encode()
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=15)
+
+
+def load_state() -> dict:
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    return {"notified": False}
+
+
+def save_state(state: dict) -> None:
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+def main() -> None:
+    state = load_state()
+
+    try:
+        days = get_available_days()
+    except Exception as exc:  # el sitio pudo cambiar de estructura, timeout, etc.
+        print(f"ERROR revisando la página: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Días visibles en el date-picker: {days}")
+    available = TARGET_DAY in days
+
+    if available and not state.get("notified"):
+        msg = f"¡Ya se pueden comprar boletas para el {TARGET_DAY}! {FILM_URL}"
+        print(msg)
+        notify(msg)
+        state["notified"] = True
+        save_state(state)
+    elif available:
+        print("Ya disponible, pero ya se había notificado antes. No se reenvía.")
+    else:
+        print(f"Todavía no aparece el día {TARGET_DAY}. Nada que hacer.")
+
+
+if __name__ == "__main__":
+    main()
