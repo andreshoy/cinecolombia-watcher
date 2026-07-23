@@ -1,1 +1,1 @@
-playwright==1.47.0
+patchright==1.61.2

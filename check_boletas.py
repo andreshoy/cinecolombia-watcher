@@ -12,12 +12,23 @@ Se investigaron dos posibles señales:
    Solo renderiza los días para los que ya se puede comprar boleta. Esta
    es la señal real.
 
-Por eso el script usa Playwright para cargar la página con un navegador
-real y lee directamente los días visibles en el date-picker
+Por eso el script usa un navegador real para cargar la página y lee
+directamente los días visibles en el date-picker
 (`.v-date-picker-date__day-of-month`). Esto también evita tener que
 replicar el token Bearer (expira cada 12h, lo emite auth.moviexchange.com)
 o las cookies de Cloudflare (cf_clearance) — el navegador real las
 resuelve solo.
+
+Se usa `patchright` (fork de Playwright con parches anti-detección) en
+modo *headed* en vez de `playwright` normal: se confirmó en vivo que
+Cloudflare bloquea a Playwright headless (detecta `navigator.webdriver`)
+mostrando un challenge interactivo que nunca se resuelve solo. Con
+patchright + headed sí se pasa. En CI, "headed" corre sobre un display
+virtual (xvfb, ver check-boletas.yml).
+
+Antes de que aparezca el date-picker hay que cerrar un modal
+obligatorio de selección de ciudad ("Elige tu ciudad"); sin eso el
+date-picker nunca se renderiza. Se usa Cali (`CITY`) como ciudad fija.
 
 Notifica por ntfy.sh (y opcionalmente Telegram) solo la PRIMERA vez que
 detecta la fecha disponible, usando estado.json para no repetir el aviso.
@@ -28,11 +39,12 @@ import os
 import sys
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from patchright.sync_api import sync_playwright
 
 # ---- CONFIGURACIÓN ----------------------------------------------------
 FILM_URL = "https://www.cinecolombia.com/films/the-odyssey/HO00000386/"
 TARGET_DAY = "30"  # día del mes que estamos esperando (jueves 30 de julio)
+CITY = "Cali"
 DATE_PICKER_SELECTOR = ".v-date-picker-date__day-of-month"
 STATE_FILE = "estado.json"
 
@@ -45,14 +57,16 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 def get_available_days() -> list[str]:
     """Abre la página de la película y devuelve los días visibles en el date-picker."""
     with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            )
-        )
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
         page.goto(FILM_URL, wait_until="domcontentloaded", timeout=30000)
+
+        # Modal obligatorio "Elige tu ciudad": sin cerrarlo, el date-picker
+        # nunca se renderiza.
+        page.get_by_text("Seleccionar...").click(timeout=15000)
+        page.locator(".v-dropdown-option__text", has_text=CITY).click(timeout=10000)
+        page.get_by_text("Confirmar", exact=True).click(timeout=10000)
+
         page.wait_for_selector(DATE_PICKER_SELECTOR, timeout=20000)
         days = page.locator(DATE_PICKER_SELECTOR).all_inner_texts()
         browser.close()

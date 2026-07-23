@@ -59,10 +59,29 @@ Se investigaron dos APIs internas de `digital-api.cinecolombia.com`:
   detrás de **Cloudflare** (`cf_clearance`), que normalmente solo se
   resuelve con un navegador real ejecutando JavaScript.
 
-Por eso el script usa un navegador real (Playwright) y lee directamente
-el date-picker que ve cualquier usuario — es la señal que se confirmó
-como confiable, y de paso el navegador resuelve solo el token y el
-challenge de Cloudflare sin que el script tenga que manejarlos.
+Por eso el script usa un navegador real y lee directamente el
+date-picker que ve cualquier usuario — es la señal que se confirmó
+como confiable, y de paso el navegador resuelve solo el token sin que
+el script tenga que manejarlo.
+
+### Cloudflare bloquea Playwright headless normal
+
+Se probó en vivo: Cloudflare detecta a Playwright headless (via
+`navigator.webdriver` y otras señales) y muestra un challenge
+interactivo ("Verify you are human") que **no se resuelve solo**, ni
+esperando. Por eso el script usa
+[`patchright`](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
+(fork de Playwright con parches anti-detección) en **modo headed**
+(`headless=False`) — en headless, incluso patchright fue bloqueado. En
+GitHub Actions "headed" corre sobre un display virtual (`xvfb`), que el
+workflow instala y usa vía `xvfb-run`.
+
+### Modal de selección de ciudad
+
+Antes de que el date-picker aparezca hay un modal obligatorio "Elige tu
+ciudad". El script lo cierra seleccionando `CITY` (Cali por defecto,
+configurable en `check_boletas.py`) — sin esto el date-picker nunca se
+renderiza, incluso ya pasado el challenge de Cloudflare.
 
 ## Notas / cosas a vigilar
 

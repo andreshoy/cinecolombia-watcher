@@ -25,10 +25,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Instalar navegador de Playwright
-        run: playwright install --with-deps chromium
+        run: patchright install --with-deps chromium
+
+      - name: Instalar Xvfb (display virtual para modo headed)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
 
       - name: Revisar disponibilidad
-        run: python check_boletas.py
+        run: xvfb-run --auto-servernum python check_boletas.py
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
