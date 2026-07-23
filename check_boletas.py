@@ -59,17 +59,28 @@ def get_available_days() -> list[str]:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         page = browser.new_page()
-        page.goto(FILM_URL, wait_until="domcontentloaded", timeout=30000)
+        try:
+            page.goto(FILM_URL, wait_until="domcontentloaded", timeout=30000)
 
-        # Modal obligatorio "Elige tu ciudad": sin cerrarlo, el date-picker
-        # nunca se renderiza.
-        page.get_by_text("Seleccionar...").click(timeout=15000)
-        page.locator(".v-dropdown-option__text", has_text=CITY).click(timeout=10000)
-        page.get_by_text("Confirmar", exact=True).click(timeout=10000)
+            # Banner de cookies: si aparece, puede tapar el dropdown de ciudad.
+            try:
+                page.get_by_text("Aceptar", exact=True).click(timeout=5000)
+            except Exception:
+                pass
 
-        page.wait_for_selector(DATE_PICKER_SELECTOR, timeout=20000)
-        days = page.locator(DATE_PICKER_SELECTOR).all_inner_texts()
-        browser.close()
+            # Modal obligatorio "Elige tu ciudad": sin cerrarlo, el date-picker
+            # nunca se renderiza.
+            page.get_by_text("Seleccionar...").click(timeout=15000)
+            page.locator(".v-dropdown-option__text", has_text=CITY).click(timeout=10000)
+            page.get_by_text("Confirmar", exact=True).click(timeout=10000)
+
+            page.wait_for_selector(DATE_PICKER_SELECTOR, timeout=20000)
+            days = page.locator(DATE_PICKER_SELECTOR).all_inner_texts()
+        except Exception:
+            page.screenshot(path="debug_screenshot.png", full_page=True)
+            raise
+        finally:
+            browser.close()
         return [d.strip() for d in days]
 
 

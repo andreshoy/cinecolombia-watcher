@@ -37,6 +37,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
+      - name: Subir screenshot de diagnóstico si falló
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug_screenshot.png
+          if-no-files-found: ignore
+
       - name: Guardar estado si cambió
         run: |
           git config user.name "github-actions[bot]"
