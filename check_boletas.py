@@ -54,34 +54,55 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 # ------------------------------------------------------------------------
 
 
+MAX_ATTEMPTS = 3
+
+
+def _attempt(browser) -> list[str]:
+    page = browser.new_page()
+    try:
+        page.goto(FILM_URL, wait_until="domcontentloaded", timeout=30000)
+
+        # Banner de cookies: si aparece, puede tapar el dropdown de ciudad.
+        try:
+            page.get_by_text("Aceptar", exact=True).click(timeout=5000)
+        except Exception:
+            pass
+
+        # Modal obligatorio "Elige tu ciudad": sin cerrarlo, el date-picker
+        # nunca se renderiza.
+        page.get_by_text("Seleccionar...").click(timeout=15000)
+        page.locator(".v-dropdown-option__text", has_text=CITY).click(timeout=10000)
+        page.get_by_text("Confirmar", exact=True).click(timeout=10000)
+
+        page.wait_for_selector(DATE_PICKER_SELECTOR, timeout=20000)
+        return [d.strip() for d in page.locator(DATE_PICKER_SELECTOR).all_inner_texts()]
+    except Exception:
+        page.screenshot(path="debug_screenshot.png", full_page=True)
+        raise
+    finally:
+        page.close()
+
+
 def get_available_days() -> list[str]:
-    """Abre la página de la película y devuelve los días visibles en el date-picker."""
+    """Abre la página de la película y devuelve los días visibles en el date-picker.
+
+    A veces la SPA queda en blanco (ver README, sección Cloudflare) en un
+    intento aislado; por eso se reintenta con una página nueva antes de
+    darse por vencido.
+    """
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
         try:
-            page.goto(FILM_URL, wait_until="domcontentloaded", timeout=30000)
-
-            # Banner de cookies: si aparece, puede tapar el dropdown de ciudad.
-            try:
-                page.get_by_text("Aceptar", exact=True).click(timeout=5000)
-            except Exception:
-                pass
-
-            # Modal obligatorio "Elige tu ciudad": sin cerrarlo, el date-picker
-            # nunca se renderiza.
-            page.get_by_text("Seleccionar...").click(timeout=15000)
-            page.locator(".v-dropdown-option__text", has_text=CITY).click(timeout=10000)
-            page.get_by_text("Confirmar", exact=True).click(timeout=10000)
-
-            page.wait_for_selector(DATE_PICKER_SELECTOR, timeout=20000)
-            days = page.locator(DATE_PICKER_SELECTOR).all_inner_texts()
-        except Exception:
-            page.screenshot(path="debug_screenshot.png", full_page=True)
-            raise
+            last_exc: Exception | None = None
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                try:
+                    return _attempt(browser)
+                except Exception as exc:
+                    last_exc = exc
+                    print(f"Intento {attempt}/{MAX_ATTEMPTS} falló: {exc}", file=sys.stderr)
+            raise last_exc
         finally:
             browser.close()
-        return [d.strip() for d in days]
 
 
 def notify(message: str) -> None:
